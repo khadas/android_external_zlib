@@ -24,10 +24,14 @@ zlib_files := \
 
 LOCAL_MODULE := libz
 LOCAL_MODULE_TAGS := optional
-LOCAL_CFLAGS += -O3 -DUSE_MMAP
+LOCAL_CFLAGS += -O2 -DUSE_MMAP
 LOCAL_SRC_FILES := $(zlib_files)
 ifeq ($(TARGET_ARCH),arm)
   LOCAL_SDK_VERSION := 9
+  LOCAL_CFLAGS += -DTARGET_ARCH_ARM
+  LOCAL_C_INCLUDES += system/core/include/
+  LOCAL_SHARED_LIBRARIES := \
+                          libcutils
 endif
 include $(BUILD_SHARED_LIBRARY)
 
@@ -36,10 +40,14 @@ include $(CLEAR_VARS)
 LOCAL_ARM_MODE := arm
 LOCAL_MODULE := libz
 LOCAL_MODULE_TAGS := optional
-LOCAL_CFLAGS += -O3 -DUSE_MMAP
+LOCAL_CFLAGS += -O2 -DUSE_MMAP
 LOCAL_SRC_FILES := $(zlib_files)
 ifeq ($(TARGET_ARCH),arm)
   LOCAL_SDK_VERSION := 9
+  LOCAL_C_INCLUDES += system/core/include/
+  LOCAL_CFLAGS += -DTARGET_ARCH_ARM
+  LOCAL_SHARED_LIBRARIES := \
+                          libcutils
 endif
 include $(BUILD_STATIC_LIBRARY)
 
@@ -48,7 +56,7 @@ include $(CLEAR_VARS)
 LOCAL_ARM_MODE := arm
 LOCAL_MODULE := libz
 LOCAL_MODULE_TAGS := optional
-LOCAL_CFLAGS += -O3 -DUSE_MMAP
+LOCAL_CFLAGS += -O2 -DUSE_MMAP
 LOCAL_SRC_FILES := $(zlib_files)
 LOCAL_MULTILIB := both
 include $(BUILD_HOST_STATIC_LIBRARY)
@@ -59,7 +67,7 @@ include $(CLEAR_VARS)
 LOCAL_ARM_MODE := arm
 LOCAL_MODULE := libz-host
 LOCAL_MODULE_TAGS := optional
-LOCAL_CFLAGS += -O3 -DUSE_MMAP
+LOCAL_CFLAGS += -O2 -DUSE_MMAP
 LOCAL_SRC_FILES := $(zlib_files)
 LOCAL_MULTILIB := both
 include $(BUILD_HOST_SHARED_LIBRARY)

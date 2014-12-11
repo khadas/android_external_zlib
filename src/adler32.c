@@ -61,6 +61,70 @@ local uLong adler32_combine_ OF((uLong adler1, uLong adler2, z_off64_t len2));
 #  define MOD63(a) a %= BASE
 #endif
 
+#ifdef TARGET_ARCH_ARM
+#include <cutils/log.h>
+#define LOG_TAG "libz"
+void __attribute__((noinline)) adler32_neon(const char *buf, unsigned int *s1, unsigned int *s2, int k)
+{
+    /*
+     * Algorithm:
+     * buf: |x0|x1|x2|x3|x4|x5|x6|....|x15|
+     * init s1 s2: s10 s20
+     * Steps    s1 result           s2 result
+     * ----------------------------------------
+     * 1        s10+x0              s20+s10+x0
+     * 2        s10+x0+x1           s20+s10+x0 + s10+x0+x1 = s20+2*s10+2*x0+x1
+     * 3        s10+x0+x1+x2        s20+2*s10+2*x0+x1 + s10+x0+x1+x2 = s20+3*s10+3*x0+2*x1+x2
+     * ...
+     * 16       s10+x0+x1+...x15    s20+16*s10+16*x0+15*x1+14*x2+...+2*x14+x15
+     * ...
+     * 32       s10+sum(x0...x31)   s20+31*s10+32*x0+31*x1+...+x31 = s20
+     */
+    asm volatile (
+        "ldr         r12, =0x0d0e0f10           \n"
+        "ldr         lr,  =0x090a0b0c           \n"
+        "vmov        d30, r12, lr               \n"
+        "ldr         r12, =0x05060708           \n"
+        "ldr         lr,  =0x01020304           \n"
+        "vmov        d31, r12, lr               \n"
+        "vmov.i8     d28, #0                    \n"
+        "vmov.i8     q0,  #0                    \n"
+        "ldr         lr,  [%[s1]]               \n"        // lr  = s1
+        "ldr         r12, [%[s2]]               \n"        // r12 = s2
+        "bic         %[k], %[k], #0xf           \n"        // clear
+        "mla         r12, lr, %[k], r12         \n"        // r12 = s2 + s1*(k&~0xf)
+    ".Lloop:                                    \n"
+        "vld1.8      {d6, d7}, [%[buf]]!        \n"
+        "vshl.i32    d19, d0, #4                \n"        // sum(f..0) * 16
+        "sub         %[k], %[k], #16            \n"        // k -= 16
+        "vmull.u8    q2, d6, d30                \n"
+        "vmull.u8    q8, d7, d31                \n"
+        "vadd.i32    d1, d1, d19                \n"        // s2 += 16*sum(f...0)
+        "vpaddl.u8   q1, q3                     \n"        // q1 = |x15+x14|x13+x12|...|x3+x2|x1+x0|
+        "cmp         %[k], #16                  \n"        //
+        "vpadd.i16   d4, d4, d5                 \n"        // d4 = |f+2*e|...|13*3+14*2+15*1+16*0|
+        "vpadd.i16   d16, d16, d17              \n"        //
+        "vpadd.i16   d2, d2, d3                 \n"        // d2 = |f+e+d+c|b+a+9+8|7+6+5+4|3+2+1+0|
+        "vpadd.i16   d4, d4, d16                \n"        // d4 = |f+2*e|...|13*3+14*2+15*1+16*0|
+        "vpadd.i16   d2, d2, d28                \n"        // d2 = |0|0|f+e+d+..+8|7+6+..+0|.16
+        "vpadd.i16   d4, d4, d28                \n"        //
+        "vpadal.u16  d0, d2                     \n"        // d0 = |0|f+e+d+..+1+0|.32
+        "vpadal.u16  d1, d4                     \n"        // d1 = |0|f+2*e+3*d+..+15*1+16*0|.32
+        "bge         .Lloop                     \n"
+
+        "vmov.32     %[buf],  d0[0]             \n"
+        "vmov.32     %[k],  d1[0]               \n"
+        "add         lr,  %[buf], lr            \n"
+        "add         r12, %[k], r12             \n"
+        "str         lr,  [%[s1]]               \n"
+        "str         r12, [%[s2]]               \n"
+        :
+        :[buf] "r" (buf), [s1] "r" (s1), [s2] "r" (s2), [k] "r" (k)
+        :"memory", "cc", "r12", "lr"
+    );
+}
+#endif  /* TARGET_ARCH_ARM */
+
 /* ========================================================================= */
 uLong ZEXPORT adler32(adler, buf, len)
     uLong adler;
@@ -104,22 +168,35 @@ uLong ZEXPORT adler32(adler, buf, len)
     /* do length NMAX blocks -- requires just one modulo operation */
     while (len >= NMAX) {
         len -= NMAX;
+    #ifdef TARGET_ARCH_ARM
+        adler32_neon(buf, &adler, &sum2, NMAX);
+        buf += NMAX;
+    #else
         n = NMAX / 16;          /* NMAX is divisible by 16 */
         do {
             DO16(buf);          /* 16 sums unrolled */
             buf += 16;
         } while (--n);
+    #endif    /* TARGET_ARCH_ARM */
         MOD(adler);
         MOD(sum2);
     }
 
     /* do remaining bytes (less than NMAX, still just one modulo) */
     if (len) {                  /* avoid modulos if none remaining */
+    #ifdef TARGET_ARCH_ARM
+        if (len >= 16) {
+            adler32_neon(buf, &adler, &sum2, len);
+            buf += (len & ~0x0f);
+            len  = (len % 16);
+        }
+    #else
         while (len >= 16) {
             len -= 16;
             DO16(buf);
             buf += 16;
         }
+    #endif  /* TARGET_ARCH_ARM */
         while (len--) {
             adler += *buf++;
             sum2 += adler;
