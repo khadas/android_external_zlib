@@ -82,7 +82,7 @@ static inline void zmemset32(void *dst, unsigned int data, size_t cnt)
 static inline void small_copy(unsigned char *dst, const unsigned char *src, size_t cnt)
 {
     unsigned int tmp;
-    if ((signed)(dst - src) < 0 || (signed)(dst - src) >=32) {
+    if ((signed)(dst - src) < 0 || (signed)(dst - src) >=64) {
         memcpy(dst, src, cnt);
         return ;
     }
