@@ -61,7 +61,7 @@ local uLong adler32_combine_ OF((uLong adler1, uLong adler2, z_off64_t len2));
 #  define MOD63(a) a %= BASE
 #endif
 
-#ifdef TARGET_ARCH_ARM
+#if defined(TARGET_ARCH_ARM) && !defined(__aarch64__)
 #include <cutils/log.h>
 #define LOG_TAG "libz"
 void __attribute__((noinline)) adler32_neon(const char *buf, unsigned int *s1, unsigned int *s2, int k)
@@ -168,7 +168,7 @@ uLong ZEXPORT adler32(adler, buf, len)
     /* do length NMAX blocks -- requires just one modulo operation */
     while (len >= NMAX) {
         len -= NMAX;
-    #ifdef TARGET_ARCH_ARM
+    #if defined(TARGET_ARCH_ARM) && !defined(__aarch64__)
         adler32_neon(buf, &adler, &sum2, NMAX);
         buf += NMAX;
     #else
@@ -184,7 +184,7 @@ uLong ZEXPORT adler32(adler, buf, len)
 
     /* do remaining bytes (less than NMAX, still just one modulo) */
     if (len) {                  /* avoid modulos if none remaining */
-    #ifdef TARGET_ARCH_ARM
+    #if defined(TARGET_ARCH_ARM) && !defined(__aarch64__)
         if (len >= 16) {
             adler32_neon(buf, &adler, &sum2, len);
             buf += (len & ~0x0f);

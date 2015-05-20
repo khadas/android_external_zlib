@@ -21,7 +21,7 @@
    - Pentium III (Anderson)
    - M68060 (Nikl)
  */
-#ifdef TARGET_ARCH_ARM
+#if defined(TARGET_ARCH_ARM) && !defined(__aarch64__)
 #define POSTINC
 #include <cutils/log.h>
 #define LOG_TAG    "libz"
