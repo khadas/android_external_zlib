@@ -21,6 +21,121 @@
    - Pentium III (Anderson)
    - M68060 (Nikl)
  */
+#if defined(__arm__) && !defined(__aarch64__)
+#define POSTINC
+#include <cutils/log.h>
+#define LOG_TAG    "libz"
+#define MEM_OPT
+static inline void zmemset16(void *dst, unsigned short data, size_t cnt)
+{
+    asm volatile (
+        "orr    %[data], %[data], %[data], lsl #16      \n"
+        "subs   %[cnt], %[cnt], #4                      \n"
+        "blt    161f                                    \n"
+    "162:                                               \n"
+        "str    %[data], [%[dst]], #4                   \n"
+        "subs   %[cnt], %[cnt], #4                      \n"
+        "bge    162b                                    \n"
+    "161:                                               \n"
+        "adds   %[cnt], %[cnt], #4                      \n"
+        "beq    163f                                    \n"
+        "tst    %[cnt], #2                              \n"
+        "strhne %[data], [%[dst]], #2                   \n"
+        "tst    %[cnt], #1                              \n"
+        "strbne %[data], [%[dst]], #1                   \n"
+        "mov    %[cnt], #0                              \n"
+    "163:                                               \n"
+        :
+        : [dst] "r" (dst), [data] "r" (data), [cnt] "r" (cnt)
+        : "memory", "cc"
+    );
+}
+
+static inline void zmemset32(void *dst, unsigned int data, size_t cnt)
+{
+    asm volatile (
+        "subs   %[cnt], %[cnt], #8                      \n"
+        "blt    321f                                    \n"
+    "322:                                               \n"
+        "str    %[data], [%[dst]], #4                   \n"
+        "str    %[data], [%[dst]], #4                   \n"
+        "subs   %[cnt], %[cnt], #8                      \n"
+        "bge    322b                                    \n"
+    "321:                                               \n"
+        "adds    %[cnt], %[cnt], #8                     \n"
+        "beq    323f                                    \n"
+        "tst    %[cnt], #4                              \n"
+        "strne  %[data], [%[dst]], #4                   \n"
+        "tst    %[cnt], #2                              \n"
+        "strhne %[data], [%[dst]], #2                   \n"
+        "lsrne  %[data], %[data], #16                   \n"
+        "tst    %[cnt], #1                              \n"
+        "strbne %[data], [%[dst]], #1                   \n"
+        "mov    %[cnt], #0                              \n"
+    "323:                                               \n"
+        :
+        : [dst] "r" (dst), [data] "r" (data), [cnt] "r" (cnt)
+        : "memory", "cc"
+    );
+}
+
+static inline void small_copy(unsigned char *dst, const unsigned char *src, size_t cnt)
+{
+    unsigned int tmp;
+    if ((signed)(dst - src) < 0 || (signed)(dst - src) >=64) {
+        memcpy(dst, src, cnt);
+        return ;
+    }
+    switch ((signed)(dst) - (signed)(src)) {
+    case 1:
+        tmp = *src;
+        memset(dst, tmp, cnt);
+        break;
+    case 2:
+        tmp = ((unsigned short*)src)[0];
+        zmemset16(dst, tmp, cnt);
+        break;
+    case 3:
+        do {
+            *dst++ = *src++;
+        } while (--cnt > 0);
+        break;
+    case 4:
+        tmp = ((unsigned int*)src)[0];
+        zmemset32(dst, tmp, cnt);
+        break;
+    default:
+        /*
+         * copy 4 bytes each time
+         */
+        asm volatile (
+            "subs   %[cnt], %[cnt], #4                  \n"
+            "blt    444f                                \n"
+        "442:                                           \n"
+            "ldr    r12, [%[src]], #4                   \n"
+            "subs   %[cnt], %[cnt], #4                  \n"
+            "str    r12, [%[dst]], #4                   \n"
+            "bge    442b                                \n"
+        "444:                                           \n"
+            "adds   %[cnt], %[cnt], #4                  \n"
+            "beq    445f                                \n"
+            "tst    %[cnt], #2                          \n"
+            "ldrhne r12, [%[src]], #2                   \n"
+            "strhne r12, [%[dst]], #2                   \n"
+            "tst    %[cnt], #1                          \n"
+            "ldrbne r12, [%[src]], #1                   \n"
+            "strbne r12, [%[dst]], #1                   \n"
+            "mov    %[cnt], #0                          \n"
+        "445:                                           \n"
+            :
+            :[src] "r" (src), [dst] "r" (dst), [cnt] "r" (cnt)
+            :"memory", "cc", "r12"
+        );
+        break;
+    }
+}
+#endif      /* __arm__ */
+
 #ifdef POSTINC
 #  define OFF 0
 #  define PUP(a) *(a)++
@@ -195,20 +310,39 @@ unsigned start;         /* inflate()'s starting value for strm->avail_out */
                         }
 #ifdef INFLATE_ALLOW_INVALID_DISTANCE_TOOFAR_ARRR
                         if (len <= op - whave) {
+                        #ifdef MEM_OPT
+                            memset(out, 0, len);
+                            out += len;
+                            len  = 0;
+                        #else
                             do {
                                 PUP(out) = 0;
                             } while (--len);
+                        #endif
                             continue;
                         }
                         len -= op - whave;
+                    #ifdef MEM_OPT
+                        memset(out, 0, op - whave);
+                        out += (op - whave);
+                        op   = whave;
+                    #else
                         do {
                             PUP(out) = 0;
                         } while (--op > whave);
+                    #endif
                         if (op == 0) {
                             from = out - dist;
+                        #ifdef MEM_OPT
+                            small_copy(out, from, len);
+                            out  += len;
+                            from += len;
+                            len   = 0;
+                        #else
                             do {
                                 PUP(out) = PUP(from);
                             } while (--len);
+                        #endif
                             continue;
                         }
 #endif
@@ -218,9 +352,16 @@ unsigned start;         /* inflate()'s starting value for strm->avail_out */
                         from += wsize - op;
                         if (op < len) {         /* some from window */
                             len -= op;
+                        #ifdef MEM_OPT
+                            small_copy(out, from, op);
+                            out  += op;
+                            from += op;
+                            op = 0;
+                        #else
                             do {
                                 PUP(out) = PUP(from);
                             } while (--op);
+                        #endif
                             from = out - dist;  /* rest from output */
                         }
                     }
@@ -229,16 +370,30 @@ unsigned start;         /* inflate()'s starting value for strm->avail_out */
                         op -= wnext;
                         if (op < len) {         /* some from end of window */
                             len -= op;
+                        #ifdef MEM_OPT
+                            small_copy(out, from, op);
+                            out  += op;
+                            from += op;
+                            op = 0;
+                        #else
                             do {
                                 PUP(out) = PUP(from);
                             } while (--op);
+                        #endif
                             from = window - OFF;
                             if (wnext < len) {  /* some from start of window */
                                 op = wnext;
                                 len -= op;
+                            #ifdef MEM_OPT
+                                small_copy(out, from, op);
+                                out  += op;
+                                from += op;
+                                op = 0;
+                            #else
                                 do {
                                     PUP(out) = PUP(from);
                                 } while (--op);
+                            #endif
                                 from = out - dist;      /* rest from output */
                             }
                         }
@@ -247,12 +402,25 @@ unsigned start;         /* inflate()'s starting value for strm->avail_out */
                         from += wnext - op;
                         if (op < len) {         /* some from window */
                             len -= op;
+                        #ifdef MEM_OPT
+                            small_copy(out, from, op);
+                            out  += op;
+                            from += op;
+                            op = 0;
+                        #else
                             do {
                                 PUP(out) = PUP(from);
                             } while (--op);
+                        #endif
                             from = out - dist;  /* rest from output */
                         }
                     }
+                #ifdef MEM_OPT
+                    small_copy(out, from, len);
+                    out  += len;
+                    from += len;
+                    len   = (len % 3);
+                #else
                     while (len > 2) {
                         PUP(out) = PUP(from);
                         PUP(out) = PUP(from);
@@ -264,6 +432,7 @@ unsigned start;         /* inflate()'s starting value for strm->avail_out */
                         if (len > 1)
                             PUP(out) = PUP(from);
                     }
+                #endif
                 }
                 else {
                     from = out - dist;          /* copy direct from output */
